@@ -1,0 +1,10 @@
+<launch>
+
+  <arg name="bagfile" default="$(env HOME)/ws/rosbag/freiburg1_room_cvo_fix.bag" />  
+  <node pkg="rosbag" type="play" name="player" output="screen" args="$(arg bagfile) -q" />
+
+  <node pkg="dummy_state_publisher" type="dummy_state_publisher" name="dummy_state_publisher" output="screen">
+    <remap from="~pose_in" to="/cvo_poses_qt"/>
+  </node>
+
+</launch>
