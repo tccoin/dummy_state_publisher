@@ -4,7 +4,9 @@
   <node pkg="rosbag" type="play" name="player" output="screen" args="$(arg bagfile) -q" />
 
   <node pkg="dummy_state_publisher" type="dummy_state_publisher" name="dummy_state_publisher" output="screen">
-    <remap from="~pose_in" to="/cvo_poses_qt"/>
+    <param name="pose_topic"  type="string"   value="/cvo_poses_qt" />
+    <param name="trajectory_topic"  type="string"   value="/gtsam_backend_node/traj_out" />
+
   </node>
 
 </launch>

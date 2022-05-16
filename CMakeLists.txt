@@ -9,6 +9,9 @@ find_package(catkin REQUIRED COMPONENTS
   inekf_msgs
   roscpp
   std_msgs
+  tf2
+  tf2_geometry_msgs
+
 )
 
 ## Declare a catkin package
