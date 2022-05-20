@@ -14,6 +14,7 @@ ros::Publisher pubState, pubTrajectoryGT;
 inekf_msgs::State state;
 
 bool trajectoryInitialized = false;
+double stateCov;
 
 void handle_pose(geometry_msgs::PoseStamped::Ptr msg)
 {
@@ -21,6 +22,10 @@ void handle_pose(geometry_msgs::PoseStamped::Ptr msg)
     state.header = msg->header;
     state.position = msg->pose.position;
     state.orientation = msg->pose.orientation;
+    for (int i = 0; i < 9; ++i)
+    {
+        state.covariance[9 * i + i] = stateCov;
+    }
     pubState.publish(state);
 
     // align backend trajectory to gt
@@ -42,8 +47,15 @@ void handle_pose(geometry_msgs::PoseStamped::Ptr msg)
     }
     transformStampedPub.header = msg->header;
     br.sendTransform(transformStampedPub);
+}
+
+void handle_trajectory(nav_msgs::Path::Ptr msg)
+{
+    trajectoryInitialized = true;
 
     // publish gt trajectory
+    static tf2_ros::Buffer tfBuffer;
+    static tf2_ros::TransformListener tfListener(tfBuffer);
     static nav_msgs::Path trajectoryMsg;
     geometry_msgs::PoseStamped poseStamped;
     static geometry_msgs::TransformStamped transformStamped;
@@ -61,12 +73,8 @@ void handle_pose(geometry_msgs::PoseStamped::Ptr msg)
     poseStamped.pose.position.z = transformStamped.transform.translation.z;
     trajectoryMsg.poses.push_back(poseStamped);
     trajectoryMsg.header = msg->header;
+    trajectoryMsg.header.frame_id = "world";
     pubTrajectoryGT.publish(trajectoryMsg);
-}
-
-void handle_trajectory(nav_msgs::Path::Ptr msg)
-{
-    trajectoryInitialized = true;
 }
 
 int main(int argc, char **argv)
@@ -77,6 +85,7 @@ int main(int argc, char **argv)
     string pose_topic, trajectory_topic;
     nh.param<string>("pose_topic", pose_topic, "pose_in");
     nh.param<string>("trajectory_topic", trajectory_topic, "trajectory_in");
+    nh.param<double>("state_covariance", stateCov, 0.01);
 
     ros::Subscriber subPose = nh.subscribe(pose_topic, 2000, &handle_pose);
     ROS_INFO("subscribing: %s", subPose.getTopic().c_str());
