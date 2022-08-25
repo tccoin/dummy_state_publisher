@@ -1,0 +1,14 @@
+<launch>
+  <arg name="data_folder" default="$(env HOME)/ws/data/kitty05"/>
+
+  <node pkg="dummy_state_publisher" type="dummy_state_publisher" name="dummy_state_publisher"
+        output="screen">
+    <?ignore launch-prefix="valgrind --tool=callgrind --callgrind-out-file='callgrind.listener.%p'" ?>
+    <param name="dataset_type" value="kitti_raw" />
+    <param name="state_covariance" value="0.01" />
+    <param name="time_file" value="$(arg data_folder)/times.txt" />
+    <param name="image_folder" value="$(arg data_folder)" />
+    <param name="odom_file" value="$(arg data_folder)/cvo_intensity_img_gpu0_oct25_best/05.txt" />
+    <param name="gt_file" value="kitti_raw" />
+  </node>
+</launch>

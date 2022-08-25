@@ -11,14 +11,42 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   tf2
   tf2_geometry_msgs
-
+  cv_bridge
 )
+
+# opencv 
+SET(OpenCV_DIR /usr/local/lib/cmake/opencv4)
+message(STATUS "OpenCV library status:")
+message(STATUS "    version: ${OpenCV_VERSION}")
+message(STATUS "    libraries: ${OpenCV_LIBS}")
+message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}")
+find_package( OpenCV 4.5 REQUIRED)
+include_directories( ${OpenCV_INCLUDE_DIRS} )
+
+# elas
+set(ELAS_LIB_SOURCE
+  thirdparty/libelas/descriptor.cpp
+  thirdparty/libelas/elas.cpp
+  thirdparty/libelas/filter.cpp
+  thirdparty/libelas/matrix.cpp
+  thirdparty/libelas/triangle.cpp
+  )
+add_library(elas SHARED ${ELAS_LIB_SOURCE})
+include_directories("thirdparty")
 
 ## Declare a catkin package
 catkin_package()
 
 ## Build execs
+list(APPEND thirdparty_libraries
+  ${OpenCV_LIBS}
+  ${catkin_LIBRARIES}
+)
+file(GLOB TARGET_SRC
+  thirdparty/libelas/*.cpp
+  src/*.cpp
+)
 include_directories(include ${catkin_INCLUDE_DIRS})
-add_executable(${PROJECT_NAME} src/state_publisher_node.cpp)
-target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})
+add_executable(${PROJECT_NAME} ${TARGET_SRC})
+target_link_libraries(${PROJECT_NAME} ${thirdparty_libraries})
 add_dependencies(${PROJECT_NAME} ${catkin_EXPORTED_TARGETS})
