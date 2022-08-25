@@ -85,7 +85,7 @@ queue<float> durations;
 queue<vector<int>> odomPath;
 string imageFolder, odomFile, gtFile, timeFile;
 int imageIndex = 0;
-DepthGenerator depthGenerator;
+shared_ptr<DepthGenerator> depthGenerator;
 ros::Timer timerImage, timerImu;
 
 void read_time() {
@@ -143,14 +143,14 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
     depth = cv::imread(depthFile);
   } else {
     std::vector<float> leftDisparity;
-    depthGenerator.disparity(left, right, leftDisparity);
+    depthGenerator->disparity(left, right, leftDisparity);
     int height = left.rows;
     int width = left.cols;
     depth = cv::Mat(height, width, CV_16U);
     for (int i = 0; i < height; i++) {
       for (int j = 0; j < width; j++) {
         Eigen::Vector3f result;
-        auto status = depthGenerator.pt_depth_from_disparity(
+        auto status = depthGenerator->pt_depth_from_disparity(
             left, leftDisparity, j, i, result);
         if (status == TraceStatus::GOOD) {
           depth.at<ushort>(i, j) = result[2] * 100;
@@ -231,10 +231,19 @@ int main(int argc, char **argv) {
     ROS_INFO("subscribing: %s", subTrajectory.getTopic().c_str());
   } else if (datasetType == "kitti_raw") {
     // load params
+    float baseline, fu, fv, cx, cy;
+    Eigen::Matrix3f intrinsic;
     nh.param<string>("image_folder", imageFolder, "");
     nh.param<string>("odom_file", odomFile, "");
     nh.param<string>("gt_file", gtFile, "");
     nh.param<string>("time_file", timeFile, "");
+    nh.param<float>("camera_baseline", baseline, 0.54);
+    nh.param<float>("camera_fu", fu, 707.0912);
+    nh.param<float>("camera_fv", fv, 707.0912);
+    nh.param<float>("camera_cx", cx, 601.8873);
+    nh.param<float>("camera_cy", cy, 183.1104);
+    intrinsic << fu, 0, cx, 0, fv, cy, 0, 0, 1;
+    depthGenerator.reset(new DepthGenerator(baseline, intrinsic));
     // setup publishers
     pubLeftImage = nh.advertise<sensor_msgs::Image>("color_left", 10);
     pubRightImage = nh.advertise<sensor_msgs::Image>("color_right", 10);

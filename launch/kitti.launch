@@ -10,5 +10,10 @@
     <param name="image_folder" value="$(arg data_folder)" />
     <param name="odom_file" value="$(arg data_folder)/cvo_intensity_img_gpu0_oct25_best/05.txt" />
     <param name="gt_file" value="kitti_raw" />
+    <param name="camera_baseline" value="0.54" />
+    <param name="camera_fu" value="707.0912" />
+    <param name="camera_fv" value="707.0912" />
+    <param name="camera_cx" value="601.8873" />
+    <param name="camera_cy" value="183.1104" />
   </node>
 </launch>
