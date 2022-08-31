@@ -24,6 +24,7 @@ ros::Publisher pubState, pubTrajectoryGT, pubOdomTrajectory, pubLeftImage,
     pubRightImage, pubDepth, pubCameraInfo;
 inekf_msgs::State state;
 shared_ptr<ros::NodeHandle> nh_ptr;
+string worldFrame;
 
 bool trajectoryInitialized = false;
 double stateCov;
@@ -47,7 +48,7 @@ void handle_pose(geometry_msgs::PoseStamped::Ptr msg) {
   if (!trajectoryInitialized) {
     try {
       transformStampedPub =
-          tfBuffer.lookupTransform("world", "kinect", ros::Time(0));
+          tfBuffer.lookupTransform(worldFrame, "kinect", ros::Time(0));
       transformStampedPub.child_frame_id = "trajectory";
     } catch (tf2::TransformException &ex) {
       return;
@@ -68,7 +69,7 @@ void handle_trajectory(nav_msgs::Path::Ptr msg) {
   static geometry_msgs::TransformStamped transformStamped;
   try {
     transformStamped =
-        tfBuffer.lookupTransform("world", "kinect", ros::Time(0));
+        tfBuffer.lookupTransform(worldFrame, "kinect", ros::Time(0));
   } catch (tf2::TransformException &ex) {
     return;
   }
@@ -78,18 +79,18 @@ void handle_trajectory(nav_msgs::Path::Ptr msg) {
   poseStamped.pose.position.z = transformStamped.transform.translation.z;
   trajectoryMsg.poses.push_back(poseStamped);
   trajectoryMsg.header = msg->header;
-  trajectoryMsg.header.frame_id = "world";
+  trajectoryMsg.header.frame_id = worldFrame;
   pubTrajectoryGT.publish(trajectoryMsg);
 }
 
 /* KITTI-RAW*/
 queue<float> durations;
-queue<vector<float>> odomPath;
-string imageFolder, odomFile, gtFile, timeFile, worldFrame;
+queue<vector<float>> odomPath, gtPath;
+string imageFolder, odomFile, gtFile, timeFile;
 int imageIndex = 0;
 shared_ptr<DepthGenerator> depthGenerator;
 ros::Timer timerImage, timerImu;
-nav_msgs::Path odomTrajectoryMsg;
+nav_msgs::Path odomTrajectoryMsg, gtTrajectoryMsg;
 
 void read_time() {
   ifstream file(timeFile);
@@ -105,10 +106,10 @@ void read_time() {
   }
 }
 
-void read_odom() {
-  ifstream file(odomFile);
+void read_traj(string filePath, queue<vector<float>> &path) {
+  ifstream file(filePath);
   if (!file.is_open()) {
-    ROS_ERROR_STREAM("Error when reading the odom file.");
+    ROS_ERROR_STREAM("Error when reading the trajectory file.");
     return;
   }
   for (string line; getline(file, line);) {
@@ -116,8 +117,25 @@ void read_odom() {
     vector<float> nums;
     copy(istream_iterator<float>(in), istream_iterator<float>(),
          back_inserter(nums));
-    odomPath.push(nums);
+    path.push(nums);
   }
+}
+
+tf2::Vector3 get_pos(vector<float> &transform) {
+  return tf2::Vector3(transform[3], transform[7], transform[11]);
+}
+
+tf2::Matrix3x3 get_rot(vector<float> &transform) {
+  return tf2::Matrix3x3(transform[0], transform[1], transform[2], transform[4],
+                        transform[5], transform[6], transform[8], transform[9],
+                        transform[10]);
+}
+
+tf2::Quaternion get_quad(vector<float> &transform) {
+  auto rotationMatrix = get_rot(transform);
+  tf2::Quaternion quad;
+  rotationMatrix.getRotation(quad);
+  return quad;
 }
 
 void publish_images_and_odom(const ros::TimerEvent &e) {
@@ -175,20 +193,20 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
     cv::imwrite(depthFile, depth);
   }
 
-  // inekf state
+  // odom trajectory
   if (odomPath.empty()) {
     ROS_ERROR_STREAM("No odom for this frame");
   }
-  auto &path = odomPath.front();
+  auto &transform = odomPath.front();
+
   geometry_msgs::Point tmp;
-  tf2::Vector3 pos(path[3], path[7], path[11]);
+  auto pos = get_pos(transform);
   state.position = tf2::toMsg(pos, tmp);
-  tf2::Matrix3x3 rotationMatrix(path[0], path[1], path[2], path[4], path[5],
-                                path[6], path[8], path[9], path[10]);
-  tf2::Quaternion quad;
+  auto rotationMatrix = get_rot(transform);
+
   tf2::Quaternion rot;
   rot.setEuler(-1.5707, 0, 0);
-  rotationMatrix.getRotation(quad);
+  tf2::Quaternion quad = get_quad(transform);
   quad = rot * quad;
   quad.normalize();
   state.orientation = tf2::toMsg(quad);
@@ -197,12 +215,23 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
   }
   odomPath.pop();
 
-  // odom trajectory
   geometry_msgs::PoseStamped poseStamped;
   poseStamped.pose.orientation = state.orientation;
   poseStamped.pose.position = state.position;
   odomTrajectoryMsg.poses.push_back(poseStamped);
-  odomTrajectoryMsg.header.frame_id = "odom";
+
+  // gt trajectory
+  if (gtPath.empty()) {
+    ROS_ERROR_STREAM("No gt for this frame");
+  }
+  auto &transformGT = gtPath.front();
+  geometry_msgs::PoseStamped poseStampedGT;
+  quad = get_quad(transformGT);
+  poseStampedGT.pose.orientation = tf2::toMsg(quad);
+  pos = get_pos(transformGT);
+  poseStampedGT.pose.position = tf2::toMsg(pos, tmp);
+  gtTrajectoryMsg.poses.push_back(poseStampedGT);
+  gtPath.pop();
 
   if (false) {
     // visualize depth image
@@ -235,6 +264,8 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
   pubCameraInfo.publish(cameraInfoMsg);
   odomTrajectoryMsg.header = header;
   pubOdomTrajectory.publish(odomTrajectoryMsg);
+  gtTrajectoryMsg.header = header;
+  pubTrajectoryGT.publish(gtTrajectoryMsg);
 
   // if (imageIndex == 5) ros::shutdown();
 
@@ -290,7 +321,8 @@ int main(int argc, char **argv) {
     pubCameraInfo = nh.advertise<sensor_msgs::CameraInfo>("camera_info", 10);
     // read files
     read_time();
-    read_odom();
+    read_traj(odomFile, odomPath);
+    read_traj(gtFile, gtPath);
     // publish images
     ros::Duration duration(0.1);
     durations.pop();
