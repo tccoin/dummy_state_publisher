@@ -1,0 +1,19 @@
+<launch>
+    <arg name="data_folder" default="$(env HOME)/ws/data"/>
+    <arg name="bagfile" default="$(arg data_folder)/2022-09-07-17-02-44.bag"/>
+    <arg name="start_time" default="0"/>
+
+    <node pkg="rosbag" type="play" name="player" required="false" output="screen" args=" -q --clock -r 1 -s $(arg start_time) $(arg bagfile)">
+      <remap from="rosout" to="rosout_old" />
+      <remap from="rosout_agg" to="rosout_agg_old" />
+    </node>
+
+    <!--nodes-->
+    <param name="use_sim_time" value="true" />
+    <node name="republish_color" type="republish" pkg="image_transport" args="compressed in:=/D455/color/image_raw/compressed raw out:=/D455/color/image_raw" />
+    <node pkg="dummy_state_publisher" type="dummy_state_publisher" name="dummy_state_publisher" output="screen">
+      <param name="dataset_type" value="pose_with_cov_to_state" />
+      <param name="pose_with_cov_topic" type="string" value="/husky/inekf_estimation/pose" />
+      <param name="world_frame" value="t265_odom_frame" />
+    </node>
+</launch>

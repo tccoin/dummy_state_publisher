@@ -1,5 +1,6 @@
 #include <cv_bridge/cv_bridge.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <inekf_msgs/State.h>
 #include <nav_msgs/Path.h>
@@ -279,11 +280,56 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
 
 void publish_imu(const ros::TimerEvent &e) { ROS_INFO_STREAM("output imu"); }
 
+void handle_pose_with_cov(geometry_msgs::PoseWithCovarianceStamped::Ptr msg) {
+  int sum = 0;
+  for (int i = 0; i < 81; i++) {
+    sum += abs(state.covariance[i]);
+  }
+  if (sum == 0) {
+    // since cov for husky is 0, just insert a value on diagonal line
+    for (int i = 0; i < 9; ++i) {
+      state.covariance[9 * i + i] = stateCov;
+    }
+  } else {
+    // insert 0 for velocity
+    for (int i = 0; i < 9; i++) {
+      for (int j = 0; j < 9; j++) {
+        if (i >= 3 && i <= 5) {
+          state.covariance[i * 9 + j] = 0;
+        } else if (j >= 3 && j <= 5) {
+          state.covariance[i * 9 + j] = 0;
+        } else {
+          int index = (i <= 6 ? i : i - 3) * 9 + (j <= 6 ? j : j - 3);
+          state.covariance[i * 9 + j] = state.covariance[index];
+        }
+      }
+    }
+  }
+
+  // construct the msg
+  state.position = msg->pose.pose.position;
+  state.orientation = msg->pose.pose.orientation;
+  msg->header.frame_id = worldFrame;
+  msg->header.stamp = ros::Time::now();
+  state.header = msg->header;
+  pubState.publish(state);
+
+  // traj
+  if ((ros::Time::now() - odomTrajectoryMsg.header.stamp).toSec() >= 0.2) {
+    geometry_msgs::PoseStamped poseStamped;
+    poseStamped.pose.orientation = msg->pose.pose.orientation;
+    poseStamped.pose.position = msg->pose.pose.position;
+    odomTrajectoryMsg.poses.push_back(poseStamped);
+    odomTrajectoryMsg.header = state.header;
+    pubOdomTrajectory.publish(odomTrajectoryMsg);
+  }
+}
+
 int main(int argc, char **argv) {
   ros::init(argc, argv, "state_publisher");
   ros::NodeHandle nh("~");
   // nh_ptr.reset(&nh);
-
+  ros::Subscriber subTrajectory, subPose;
   string datasetType;
   nh.param<string>("dataset_type", datasetType, "tum_ros");
   nh.param<double>("state_covariance", stateCov, 0.01);
@@ -292,11 +338,10 @@ int main(int argc, char **argv) {
     nh.param<string>("pose_topic", pose_topic, "pose_in");
     nh.param<string>("trajectory_topic", trajectory_topic, "trajectory_in");
 
-    ros::Subscriber subPose = nh.subscribe(pose_topic, 2000, &handle_pose);
+    subPose = nh.subscribe(pose_topic, 2000, &handle_pose);
     ROS_INFO("subscribing: %s", subPose.getTopic().c_str());
 
-    ros::Subscriber subTrajectory =
-        nh.subscribe(trajectory_topic, 2000, &handle_trajectory);
+    subTrajectory = nh.subscribe(trajectory_topic, 2000, &handle_trajectory);
     ROS_INFO("subscribing: %s", subTrajectory.getTopic().c_str());
   } else if (datasetType == "kitti_raw") {
     // load params
@@ -329,6 +374,13 @@ int main(int argc, char **argv) {
     timerImage = nh.createTimer(duration, publish_images_and_odom);
     // publish imu
     // timerImu = nh.createTimer(ros::Duration(0.05), publish_imu);
+  } else if (datasetType == "pose_with_cov_to_state") {
+    // load params
+    string poseWithCovTopic;
+    nh.param<string>("pose_with_cov_topic", poseWithCovTopic, "/pose");
+    nh.param<string>("world_frame", worldFrame, "world");
+    // publish trajectory
+    subPose = nh.subscribe(poseWithCovTopic, 2000, &handle_pose_with_cov);
   }
 
   pubState = nh.advertise<inekf_msgs::State>("state", 10);
