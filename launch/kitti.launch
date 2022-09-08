@@ -1,5 +1,5 @@
 <launch>
-  <arg name="data_folder" default="$(env HOME)/ws/data/kitty05"/>
+  <arg name="data_folder" default="$(env HOME)/ws/rosbag/kitty05"/>
 
   <node pkg="dummy_state_publisher" type="dummy_state_publisher" name="dummy_state_publisher"
         output="screen">

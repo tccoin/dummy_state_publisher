@@ -1,0 +1,17 @@
+<launch>
+  <arg name="data_folder" default="$(env HOME)/ws/rosbag/P001"/>
+
+  <node pkg="dummy_state_publisher" type="dummy_state_publisher" name="dummy_state_publisher"
+        output="screen">
+    <?ignore launch-prefix="valgrind --tool=callgrind --callgrind-out-file='callgrind.listener.%p'" ?>
+    <param name="dataset_type" value="soulcity" />
+    <param name="state_covariance" value="0.01" />
+    <param name="image_folder" value="$(arg data_folder)" />
+    <param name="odom_file" value="$(arg data_folder)/pose_left.txt" />
+    <param name="camera_baseline" value="0.54" />
+    <param name="camera_fu" value="320.0" />
+    <param name="camera_fv" value="320.0" />
+    <param name="camera_cx" value="320.0" />
+    <param name="camera_cy" value="240.0" />
+  </node>
+</launch>
