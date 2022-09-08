@@ -1,0 +1,10 @@
+<launch>
+  <arg name="data_folder" default="$(env HOME)/ws/rosbag/kitty00"/>
+
+  <node pkg="dummy_state_publisher" type="fbowGen" name="fbowGenNode"
+        output="screen">
+    <param name="feature_type" value="1" />
+    <param name="image_folder" value="$(arg data_folder)" />
+   
+  </node>
+</launch>

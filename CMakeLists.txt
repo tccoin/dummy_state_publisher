@@ -21,6 +21,7 @@ message(STATUS "    version: ${OpenCV_VERSION}")
 message(STATUS "    libraries: ${OpenCV_LIBS}")
 message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}")
 find_package( OpenCV 4.5 REQUIRED)
+find_package(fbow REQUIRED)
 include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 # elas
@@ -33,7 +34,6 @@ set(ELAS_LIB_SOURCE
   )
 add_library(elas SHARED ${ELAS_LIB_SOURCE})
 include_directories("thirdparty")
-
 ## Declare a catkin package
 catkin_package()
 
@@ -41,12 +41,18 @@ catkin_package()
 list(APPEND thirdparty_libraries
   ${OpenCV_LIBS}
   ${catkin_LIBRARIES}
+  ${fbow_LIBS}
 )
 file(GLOB TARGET_SRC
   thirdparty/libelas/*.cpp
-  src/*.cpp
+  src/depth_generator.cpp
+  src/state_publisher_node.cpp
 )
 include_directories(include ${catkin_INCLUDE_DIRS})
 add_executable(${PROJECT_NAME} ${TARGET_SRC})
 target_link_libraries(${PROJECT_NAME} ${thirdparty_libraries})
 add_dependencies(${PROJECT_NAME} ${catkin_EXPORTED_TARGETS})
+
+add_executable(fbowGen src/fbowGen/fbow_generator.cpp)
+target_link_libraries(fbowGen ${thirdparty_libraries})
+add_dependencies(fbowGen ${catkin_EXPORTED_TARGETS})
