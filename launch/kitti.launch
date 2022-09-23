@@ -1,5 +1,5 @@
 <launch>
-  <arg name="data_folder" default="$(env HOME)/ws/rosbag/kitty05"/>
+  <arg name="data_folder" default="$(env HOME)/ws/data/kitty05"/>
 
   <node pkg="dummy_state_publisher" type="dummy_state_publisher" name="dummy_state_publisher"
         output="screen">
@@ -8,6 +8,7 @@
     <param name="state_covariance" value="0.01" />
     <param name="time_file" value="$(arg data_folder)/times.txt" />
     <param name="image_folder" value="$(arg data_folder)" />
+    <param name="oxts_imu_folder" value="$(arg data_folder)/oxts/data" />
     <param name="odom_file" value="$(arg data_folder)/cvo_intensity_img_gpu0_oct25_best/05.txt" />
     <param name="gt_file" value="$(arg data_folder)/groundtruth.txt" />
     <param name="camera_baseline" value="0.54" />

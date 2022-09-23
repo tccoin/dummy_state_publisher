@@ -7,6 +7,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/Image.h>
+#include <sensor_msgs/Imu.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <tf2_ros/transform_broadcaster.h>
@@ -22,13 +23,20 @@
 using namespace std;
 
 ros::Publisher pubState, pubTrajectoryGT, pubOdomTrajectory, pubLeftImage,
-    pubRightImage, pubDepth, pubCameraInfo;
+    pubRightImage, pubDepth, pubCameraInfo, pubImu;
 inekf_msgs::State state;
 shared_ptr<ros::NodeHandle> nh_ptr;
 string worldFrame;
 Eigen::Matrix3f intrinsicG;
 bool trajectoryInitialized = false;
 double stateCov;
+queue<float> durations;
+queue<vector<float>> odomPath, gtPath, oxtsImuData;
+string imageFolder, oxtsImuFolder, odomFile, gtFile, timeFile;
+int imageIndex = 0;
+shared_ptr<DepthGenerator> depthGenerator;
+ros::Timer timerImage, timerImu;
+nav_msgs::Path odomTrajectoryMsg, gtTrajectoryMsg;
 
 /* TUM-BAG*/
 void handle_pose(geometry_msgs::PoseStamped::Ptr msg) {
@@ -85,13 +93,6 @@ void handle_trajectory(nav_msgs::Path::Ptr msg) {
 }
 
 /* KITTI-RAW*/
-queue<float> durations;
-queue<vector<float>> odomPath, gtPath;
-string imageFolder, odomFile, gtFile, timeFile;
-int imageIndex = 0;
-shared_ptr<DepthGenerator> depthGenerator;
-ros::Timer timerImage, timerImu;
-nav_msgs::Path odomTrajectoryMsg, gtTrajectoryMsg;
 
 void read_time() {
   ifstream file(timeFile);
@@ -107,7 +108,7 @@ void read_time() {
   }
 }
 
-void read_traj(string filePath, queue<vector<float>> &path) {
+void read_traj(string filePath, queue<vector<float>> &q) {
   ifstream file(filePath);
   if (!file.is_open()) {
     ROS_ERROR_STREAM("Error when reading the trajectory file.");
@@ -118,7 +119,26 @@ void read_traj(string filePath, queue<vector<float>> &path) {
     vector<float> nums;
     copy(istream_iterator<float>(in), istream_iterator<float>(),
          back_inserter(nums));
-    path.push(nums);
+    q.push(nums);
+  }
+}
+
+void read_oxts_imu(string folder, queue<vector<float>> &q) {
+  for (int i = 0; i < durations.size(); i++) {
+    string filePath = folder + '/' + string(10 - to_string(i).length(), '0') +
+                      to_string(i) + ".txt";
+    ifstream file(filePath);
+    if (!file.is_open()) {
+      ROS_ERROR_STREAM("Error when reading the imu file: " << filePath);
+      return;
+    }
+    for (string line; getline(file, line);) {
+      istringstream in(line);
+      vector<float> nums;
+      copy(istream_iterator<float>(in), istream_iterator<float>(),
+           back_inserter(nums));
+      q.push(nums);
+    }
   }
 }
 
@@ -139,8 +159,8 @@ tf2::Quaternion get_quad(vector<float> &transform) {
   return quad;
 }
 tf2::Quaternion get_quadV2(vector<float> &transform) {
-   tf2::Quaternion quad(transform[3], transform[4], transform[5],transform[6]);
-   return quad;
+  tf2::Quaternion quad(transform[3], transform[4], transform[5], transform[6]);
+  return quad;
 }
 tf2::Vector3 get_posV2(vector<float> &transform) {
   return tf2::Vector3(transform[0], transform[1], transform[2]);
@@ -256,6 +276,19 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
   cameraInfoMsg.height = left.rows;
   cameraInfoMsg.width = left.cols;
 
+  // oxts imu
+  auto &imuData = oxtsImuData.front();
+  sensor_msgs::Imu imuMsg;
+  quad.setRPY(imuData[3], imuData[4], imuData[5]);
+  imuMsg.orientation = tf2::toMsg(quad);
+  imuMsg.angular_velocity.x = imuData[17];
+  imuMsg.angular_velocity.y = imuData[18];
+  imuMsg.angular_velocity.z = imuData[19];
+  imuMsg.linear_acceleration.x = imuData[11];
+  imuMsg.linear_acceleration.y = imuData[12];
+  imuMsg.linear_acceleration.z = imuData[13];
+  oxtsImuData.pop();
+
   // publish
   std_msgs::Header header;
   header.seq = imageIndex;
@@ -271,6 +304,8 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
   pubOdomTrajectory.publish(odomTrajectoryMsg);
   gtTrajectoryMsg.header = header;
   pubTrajectoryGT.publish(gtTrajectoryMsg);
+  imuMsg.header = header;
+  pubImu.publish(imuMsg);
 
   // if (imageIndex == 5) ros::shutdown();
 
@@ -281,57 +316,59 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
   // ros::Timer timerImage = nh_ptr->createTimer(duration, publish_images,
   // true);
 }
-void publish_images_and_odom_sc(const ros::TimerEvent &e){
-  
+
+void publish_images_and_odom_sc(const ros::TimerEvent &e) {
   string fileName = to_string(imageIndex++);
 
-  string depth_fileName = string(6 - fileName.length(), '0') + fileName + "_left_depth.tiff";
+  string depth_fileName =
+      string(6 - fileName.length(), '0') + fileName + "_left_depth.tiff";
   string depthFile = imageFolder + "/depth_image/" + depth_fileName;
-  auto depthImage  = cv::imread(depthFile,cv::ImreadModes::IMREAD_UNCHANGED);
- 
-    // for (int j = 0; j < 10; j ++){
-    //         cout << "---" << depthImage.at<ushort>(0,j) << " ";
-    //     }
-    //     cout << endl;
+  auto depthImage = cv::imread(depthFile, cv::ImreadModes::IMREAD_UNCHANGED);
 
-  string image_fileName = string(6 - fileName.length(), '0') + fileName + "_left.png";
+  // for (int j = 0; j < 10; j ++){
+  //         cout << "---" << depthImage.at<ushort>(0,j) << " ";
+  //     }
+  //     cout << endl;
+
+  string image_fileName =
+      string(6 - fileName.length(), '0') + fileName + "_left.png";
   string imageFile = imageFolder + "/image_left/" + image_fileName;
-  auto left  = cv::imread(imageFile, cv::ImreadModes::IMREAD_COLOR);
- 
-   if (false) {
-        // visualize depth image
-        cv::Mat depth8U;
-        depthImage.convertTo(depth8U, CV_8U, 1.0 / (50));
-        cv::imshow("depth", depth8U);
-        cv::waitKey(100);
-    }
-     depthImage.convertTo(depthImage, CV_16U, 1000 );
-   // odom trajectory
+  cout << "data_loader::load " << imageFile << endl;
+  auto left = cv::imread(imageFile, cv::ImreadModes::IMREAD_COLOR);
+
+  if (false) {
+    // visualize depth image
+    cv::Mat depth8U;
+    depthImage.convertTo(depth8U, CV_8U, 1.0 / (50));
+    cv::imshow("depth", depth8U);
+    cv::waitKey(100);
+  }
+  depthImage.convertTo(depthImage, CV_16U, 1000);
+  // odom trajectory
   if (odomPath.empty()) {
     ROS_ERROR_STREAM("No odom for this frame");
   }
   auto &transform = odomPath.front();
- // path
+  // path
   geometry_msgs::Point tmp;
   auto pos = get_posV2(transform);
   state.position = tf2::toMsg(pos, tmp);
   tf2::Quaternion quad = get_quadV2(transform);
-  //quad.normalize();
+  // quad.normalize();
   state.orientation = tf2::toMsg(quad);
   for (int i = 0; i < 9; ++i) {
     state.covariance[9 * i + i] = stateCov;
   }
-   odomPath.pop();
+  odomPath.pop();
 
-
-  //camear info 
-    sensor_msgs::CameraInfo cameraInfoMsg;
+  // camear info
+  sensor_msgs::CameraInfo cameraInfoMsg;
   auto intrinsic = intrinsicG;
   cameraInfoMsg.K = boost::array<double, 9>{
       intrinsic(0, 0), intrinsic(0, 1), intrinsic(0, 2),
       intrinsic(1, 0), intrinsic(1, 1), intrinsic(1, 2),
       intrinsic(2, 0), intrinsic(2, 1), intrinsic(2, 2)};
-  
+
   cameraInfoMsg.height = left.rows;
   cameraInfoMsg.width = left.cols;
   geometry_msgs::PoseStamped poseStamped;
@@ -339,28 +376,25 @@ void publish_images_and_odom_sc(const ros::TimerEvent &e){
   poseStamped.pose.position = state.position;
   odomTrajectoryMsg.poses.push_back(poseStamped);
 
-  //publish
+  // publish
   std_msgs::Header header;
   header.seq = imageIndex;
   header.stamp = ros::Time::now();
   header.frame_id = worldFrame;
   pubLeftImage.publish(cv_bridge::CvImage(header, "bgr8", left).toImageMsg());
-  pubDepth.publish(cv_bridge::CvImage(header, "16UC1", depthImage).toImageMsg());
+  pubDepth.publish(
+      cv_bridge::CvImage(header, "16UC1", depthImage).toImageMsg());
   state.header = header;
   pubState.publish(state);
   pubCameraInfo.publish(cameraInfoMsg);
   odomTrajectoryMsg.header = header;
   pubOdomTrajectory.publish(odomTrajectoryMsg);
-  
-
-
 
   // display the OpenCV Mat
-//   cv::namedWindow("Display window", cv::WINDOW_AUTOSIZE); // Create a window for display.
-//   cv::imshow("Display window", depth8U); // Show our image inside it.
-//   cv::waitKey(100); // Wait for a keystroke in the window
+  //   cv::namedWindow("Display window", cv::WINDOW_AUTOSIZE); // Create a
+  //   window for display. cv::imshow("Display window", depth8U); // Show our
+  //   image inside it. cv::waitKey(100); // Wait for a keystroke in the window
 }
-void publish_imu(const ros::TimerEvent &e) { ROS_INFO_STREAM("output imu"); }
 
 void handle_pose_with_cov(geometry_msgs::PoseWithCovarianceStamped::Ptr msg) {
   int sum = 0;
@@ -430,6 +464,7 @@ int main(int argc, char **argv) {
     float baseline, fu, fv, cx, cy;
     Eigen::Matrix3f intrinsic;
     nh.param<string>("image_folder", imageFolder, "");
+    nh.param<string>("oxts_imu_folder", oxtsImuFolder, "");
     nh.param<string>("odom_file", odomFile, "");
     nh.param<string>("gt_file", gtFile, "");
     nh.param<string>("time_file", timeFile, "");
@@ -446,16 +481,16 @@ int main(int argc, char **argv) {
     pubRightImage = nh.advertise<sensor_msgs::Image>("color_right", 10);
     pubDepth = nh.advertise<sensor_msgs::Image>("depth", 10);
     pubCameraInfo = nh.advertise<sensor_msgs::CameraInfo>("camera_info", 10);
+    pubImu = nh.advertise<sensor_msgs::Imu>("imu", 10);
     // read files
     read_time();
     read_traj(odomFile, odomPath);
     read_traj(gtFile, gtPath);
+    read_oxts_imu(oxtsImuFolder, oxtsImuData);
     // publish images
     ros::Duration duration(0.1);
     durations.pop();
     timerImage = nh.createTimer(duration, publish_images_and_odom);
-    // publish imu
-    // timerImu = nh.createTimer(ros::Duration(0.05), publish_imu);
   } else if (datasetType == "pose_with_cov_to_state") {
     // load params
     string poseWithCovTopic;
@@ -463,7 +498,7 @@ int main(int argc, char **argv) {
     nh.param<string>("world_frame", worldFrame, "world");
     // publish trajectory
     subPose = nh.subscribe(poseWithCovTopic, 2000, &handle_pose_with_cov);
-  }else if (datasetType == "soulcity"){
+  } else if (datasetType == "soulcity") {
     float baseline, fu, fv, cx, cy;
     nh.param<string>("image_folder", imageFolder, "");
     nh.param<string>("odom_file", odomFile, "");
@@ -472,20 +507,19 @@ int main(int argc, char **argv) {
     nh.param<float>("camera_fu", fu, 320.0);
     nh.param<float>("camera_fv", fv, 320.0);
     nh.param<float>("camera_cx", cx, 320.0);
-    nh.param<float>("camera_cy", cy, 240.0 );
+    nh.param<float>("camera_cy", cy, 240.0);
 
     pubLeftImage = nh.advertise<sensor_msgs::Image>("color_left", 10);
     pubDepth = nh.advertise<sensor_msgs::Image>("depth", 10);
     pubCameraInfo = nh.advertise<sensor_msgs::CameraInfo>("camera_info", 10);
     intrinsicG << fu, 0, cx, 0, fv, cy, 0, 0, 1;
     read_traj(odomFile, odomPath);
-    timerImu = nh.createTimer(ros::Duration(0.16), publish_images_and_odom_sc);
-
-    
+    timerImage =
+        nh.createTimer(ros::Duration(0.16), publish_images_and_odom_sc);
   }
   pubState = nh.advertise<inekf_msgs::State>("state", 10);
   pubTrajectoryGT = nh.advertise<nav_msgs::Path>("gt_trajectory", 10);
   pubOdomTrajectory = nh.advertise<nav_msgs::Path>("odom_trajectory", 10);
-  
+
   ros::spin();
 }
