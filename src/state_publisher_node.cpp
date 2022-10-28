@@ -34,6 +34,8 @@ queue<float> durations;
 queue<vector<float>> odomPath, gtPath, oxtsImuData;
 string imageFolder, oxtsImuFolder, odomFile, gtFile, timeFile;
 int imageIndex = 0;
+float warmupDuration = 0;
+float frameDuration = 0.16;
 shared_ptr<DepthGenerator> depthGenerator;
 ros::Timer timerImage, timerImu;
 nav_msgs::Path odomTrajectoryMsg, gtTrajectoryMsg;
@@ -318,6 +320,11 @@ void publish_images_and_odom(const ros::TimerEvent &e) {
 }
 
 void publish_images_and_odom_sc(const ros::TimerEvent &e) {
+  if (odomPath.empty()) {
+    ROS_INFO_STREAM("End of Dataset.");
+    exit(0);
+  }
+  ROS_INFO_STREAM("data_loader: publishing frame " << imageIndex);
   string fileName = to_string(imageIndex++);
 
   string depth_fileName =
@@ -345,9 +352,6 @@ void publish_images_and_odom_sc(const ros::TimerEvent &e) {
   }
   depthImage.convertTo(depthImage, CV_16U, 1000);
   // odom trajectory
-  if (odomPath.empty()) {
-    ROS_ERROR_STREAM("No odom for this frame");
-  }
   auto &transform = odomPath.front();
   // path
   geometry_msgs::Point tmp;
@@ -463,6 +467,9 @@ int main(int argc, char **argv) {
     // load params
     float baseline, fu, fv, cx, cy;
     Eigen::Matrix3f intrinsic;
+    nh.param<int>("start_index", imageIndex, 0);
+    nh.param<float>("warmup_duration", warmupDuration, 0);
+    nh.param<float>("frame_duration", frameDuration, 0.16);
     nh.param<string>("image_folder", imageFolder, "");
     nh.param<string>("oxts_imu_folder", oxtsImuFolder, "");
     nh.param<string>("odom_file", odomFile, "");
@@ -488,7 +495,8 @@ int main(int argc, char **argv) {
     read_traj(gtFile, gtPath);
     read_oxts_imu(oxtsImuFolder, oxtsImuData);
     // publish images
-    ros::Duration duration(0.1);
+    ros::Duration(warmupDuration).sleep();
+    ros::Duration duration(frameDuration);
     durations.pop();
     timerImage = nh.createTimer(duration, publish_images_and_odom);
   } else if (datasetType == "pose_with_cov_to_state") {
@@ -500,6 +508,9 @@ int main(int argc, char **argv) {
     subPose = nh.subscribe(poseWithCovTopic, 2000, &handle_pose_with_cov);
   } else if (datasetType == "soulcity") {
     float baseline, fu, fv, cx, cy;
+    nh.param<int>("start_index", imageIndex, 0);
+    nh.param<float>("warmup_duration", warmupDuration, 0);
+    nh.param<float>("frame_duration", frameDuration, 0.16);
     nh.param<string>("image_folder", imageFolder, "");
     nh.param<string>("odom_file", odomFile, "");
     nh.param<string>("world_frame", worldFrame, "world");
@@ -514,8 +525,9 @@ int main(int argc, char **argv) {
     pubCameraInfo = nh.advertise<sensor_msgs::CameraInfo>("camera_info", 10);
     intrinsicG << fu, 0, cx, 0, fv, cy, 0, 0, 1;
     read_traj(odomFile, odomPath);
-    timerImage =
-        nh.createTimer(ros::Duration(0.16), publish_images_and_odom_sc);
+    ros::Duration(warmupDuration).sleep();
+    timerImage = nh.createTimer(ros::Duration(frameDuration),
+                                publish_images_and_odom_sc);
   }
   pubState = nh.advertise<inekf_msgs::State>("state", 10);
   pubTrajectoryGT = nh.advertise<nav_msgs::Path>("gt_trajectory", 10);
