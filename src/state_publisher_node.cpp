@@ -340,7 +340,7 @@ void publish_images_and_odom_sc(const ros::TimerEvent &e) {
   string image_fileName =
       string(6 - fileName.length(), '0') + fileName + "_left.png";
   string imageFile = imageFolder + "/image_left/" + image_fileName;
-  cout << "data_loader::load " << imageFile << endl;
+  // cout << "data_loader::load " << imageFile << endl;
   auto left = cv::imread(imageFile, cv::ImreadModes::IMREAD_COLOR);
 
   if (false) {
@@ -380,6 +380,19 @@ void publish_images_and_odom_sc(const ros::TimerEvent &e) {
   poseStamped.pose.position = state.position;
   odomTrajectoryMsg.poses.push_back(poseStamped);
 
+  // gt trajectory
+  if (gtPath.empty()) {
+    ROS_ERROR_STREAM("No gt for this frame");
+  }
+  auto &transformGT = gtPath.front();
+  geometry_msgs::PoseStamped poseStampedGT;
+  quad = get_quadV2(transformGT);
+  poseStampedGT.pose.orientation = tf2::toMsg(quad);
+  pos = get_posV2(transformGT);
+  poseStampedGT.pose.position = tf2::toMsg(pos, tmp);
+  gtTrajectoryMsg.poses.push_back(poseStampedGT);
+  gtPath.pop();
+
   // publish
   std_msgs::Header header;
   header.seq = imageIndex;
@@ -393,6 +406,8 @@ void publish_images_and_odom_sc(const ros::TimerEvent &e) {
   pubCameraInfo.publish(cameraInfoMsg);
   odomTrajectoryMsg.header = header;
   pubOdomTrajectory.publish(odomTrajectoryMsg);
+  gtTrajectoryMsg.header = header;
+  pubTrajectoryGT.publish(gtTrajectoryMsg);
 
   // display the OpenCV Mat
   //   cv::namedWindow("Display window", cv::WINDOW_AUTOSIZE); // Create a
@@ -506,12 +521,13 @@ int main(int argc, char **argv) {
     nh.param<string>("world_frame", worldFrame, "world");
     // publish trajectory
     subPose = nh.subscribe(poseWithCovTopic, 2000, &handle_pose_with_cov);
-  } else if (datasetType == "soulcity") {
+  } else if (datasetType == "tartanair") {
     float baseline, fu, fv, cx, cy;
     nh.param<int>("start_index", imageIndex, 0);
     nh.param<float>("warmup_duration", warmupDuration, 0);
     nh.param<float>("frame_duration", frameDuration, 0.16);
     nh.param<string>("image_folder", imageFolder, "");
+    nh.param<string>("gt_file", gtFile, "");
     nh.param<string>("odom_file", odomFile, "");
     nh.param<string>("world_frame", worldFrame, "world");
     nh.param<float>("camera_baseline", baseline, 0.54);
@@ -524,6 +540,7 @@ int main(int argc, char **argv) {
     pubDepth = nh.advertise<sensor_msgs::Image>("depth", 10);
     pubCameraInfo = nh.advertise<sensor_msgs::CameraInfo>("camera_info", 10);
     intrinsicG << fu, 0, cx, 0, fv, cy, 0, 0, 1;
+    read_traj(gtFile, gtPath);
     read_traj(odomFile, odomPath);
     ros::Duration(warmupDuration).sleep();
     timerImage = nh.createTimer(ros::Duration(frameDuration),

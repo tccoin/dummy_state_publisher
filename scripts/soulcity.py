@@ -1,10 +1,10 @@
 import numpy as np
 import cv2 
 import trajectory_transform as tt
-folderPath = "/home/link/Projects/curly_slam/data/soulcity"
+folderPath = "/home/link/Projects/curly_slam/data/tartanair/scenes/office/Easy/P000"
 imageFolder = "/depth_left/"
 imageIndex = 0
-savePath = "/home/link/Projects/curly_slam/data/soulcity/depth_image/"
+savePath = folderPath+"/depth_image/"
 trajName = "pose_left.txt"
 def readimage():
     global imageIndex
